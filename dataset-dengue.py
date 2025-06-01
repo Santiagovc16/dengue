@@ -57,18 +57,6 @@ if 'Casos' not in df.columns:
     df = df_casos
 
 # -----------------------------
-# 3. VISUALIZACIÓN DE DATOS
-# -----------------------------
-
-plt.figure(figsize=(10, 5))
-sns.lineplot(x='año', y='Casos', data=df, marker='o')
-plt.title('Casos de Dengue en el Valle del Cauca (2020-2024)')
-plt.xlabel('Año')
-plt.ylabel('Número de Casos')
-plt.grid(True)
-plt.show()
-
-# -----------------------------
 # 4. PREPARACIÓN DE DATOS
 # -----------------------------
 
@@ -77,6 +65,33 @@ df_limpio = df.dropna()
 
 X = df_limpio[['año']]
 y = df_limpio['Casos']
+
+# Ajustar modelo y agregar proyección de 2025
+modelo = LinearRegression()
+modelo.fit(X, y)
+anio_pred = np.array([[2025]])
+casos_pred = modelo.predict(anio_pred)
+df_pred = pd.DataFrame({'año': [2025], 'Casos': [int(casos_pred[0])]})
+df_limpio = pd.concat([df_limpio, df_pred], ignore_index=True)
+
+# -----------------------------
+# 3. VISUALIZACIÓN DE DATOS
+# -----------------------------
+
+X_full = df_limpio[['año']]
+y_pred_full = modelo.predict(X_full)
+
+plt.figure(figsize=(10, 5))
+sns.scatterplot(x='año', y='Casos', data=df_limpio, label='Datos reales')
+sns.lineplot(x=df_limpio['año'], y=y_pred_full, color='green', label='Línea de tendencia')
+plt.scatter(2025, casos_pred, color='red', label='Predicción 2025', s=100)
+plt.title('Proyección Realista de Casos de Dengue en el Valle del Cauca (2020-2025)')
+plt.xlabel('Año')
+plt.ylabel('Número de Casos')
+plt.legend()
+plt.grid(True)
+plt.tight_layout()
+plt.show()
 
 # -----------------------------
 # 5. APLICACIÓN DE MODELO ML
@@ -101,6 +116,7 @@ r2 = r2_score(y, y_pred)
 
 print(f"📊 RMSE del modelo: {rmse:.2f}")
 print(f"📈 R2 Score (precisión): {r2:.2f}")
+
 
 # -----------------------------
 # 7. VISUALIZACIÓN DE LA PROYECCIÓN
