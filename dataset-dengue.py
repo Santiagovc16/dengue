@@ -16,6 +16,9 @@ from sklearn.metrics import mean_squared_error, r2_score
 DATA_PATH = 'data/dengue_valle.csv'
 df = pd.read_csv(DATA_PATH)
 
+# Cargar información de puntos de vacunación contra el dengue
+df_vacunacion = pd.read_csv('data/puntos_vacunacion_dengue.csv')
+
 # -----------------------------
 # 2. EXPLORACIÓN DE LOS DATOS
 # -----------------------------
@@ -90,7 +93,24 @@ plt.xlabel('Año')
 plt.ylabel('Número de Casos')
 plt.legend()
 plt.grid(True)
+
+# -----------------------------
+# 8. VISUALIZACIÓN DE VACUNACIÓN
+# -----------------------------
+
+plt.figure(figsize=(12, 6))
+sns.barplot(
+    x='Punto',
+    y='Capacidad diaria (personas)',
+    data=df_vacunacion,
+    color='steelblue'
+)
+plt.title('Capacidad diaria de vacunación por punto (Dengue)')
+plt.xlabel('Punto de Vacunación')
+plt.ylabel('Capacidad Diaria')
+plt.xticks(rotation=45, ha='right')
 plt.tight_layout()
+plt.savefig('resultados/grafica_vacunacion_dengue.png')
 plt.show()
 
 # -----------------------------
@@ -110,13 +130,20 @@ print(f"\n🔍 Proyección de casos de dengue para el año 2025: {int(casos_pred
 # 6. EVALUACIÓN DEL MODELO
 # -----------------------------
 
-y_pred = modelo.predict(X)
-rmse = np.sqrt(mean_squared_error(y, y_pred))
-r2 = r2_score(y, y_pred)
+X_eval = X  # solo años con datos reales
+y_eval_pred = modelo.predict(X_eval)
+rmse = np.sqrt(mean_squared_error(y, y_eval_pred))
+r2 = r2_score(y, y_eval_pred)
 
 print(f"📊 RMSE del modelo: {rmse:.2f}")
 print(f"📈 R2 Score (precisión): {r2:.2f}")
 
+# -----------------------------
+# Definición de y_pred para todos los datos proyectados (incluyendo 2025)
+# -----------------------------
+
+X_full = df_limpio[['año']]
+y_pred = modelo.predict(X_full)
 
 # -----------------------------
 # 7. VISUALIZACIÓN DE LA PROYECCIÓN

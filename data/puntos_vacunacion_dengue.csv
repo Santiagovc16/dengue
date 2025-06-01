@@ -1,0 +1,7 @@
+Punto,Municipio,Edad mínima (años),Edad máxima (años),Requiere infección previa,Capacidad diaria (personas)
+Hospital Universitario,Cali,9,45,Sí,200
+Centro de Salud Norte,Palmira,9,60,No,150
+Clínica del Sur,Buenaventura,9,50,Sí,100
+Puesto Salud Comuna 3,Tuluá,10,40,No,120
+IPS San Miguel,Cartago,10,50,Sí,80
+Centro Médico Integral,Buga,9,55,No,160
