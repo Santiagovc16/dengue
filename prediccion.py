@@ -287,14 +287,29 @@ def crear_visualizaciones(df_resultados, agrupado, df_vac):
     plt.tight_layout()
     plt.show()
     
-    # 5. Tabla de vacunación mejorada
-    print("\n🏥 Puntos de Vacunación contra el Dengue:")
+    # 5. Visualización de puntos de vacunación (NUEVO)
+    print("\n📍 Visualización de Puntos de Vacunación:")
     df_vac['Capacidad Semanal'] = df_vac['Capacidad diaria (personas)'] * 7
     df_vac['Prioridad'] = pd.cut(df_vac['Capacidad Semanal'], 
                                 bins=[0, 500, 1000, float('inf')],
                                 labels=['Baja', 'Media', 'Alta'])
     
-    print(df_vac.sort_values(['Prioridad', 'Municipio'])[[
+    # Gráfico de puntos de vacunación por capacidad
+    plt.figure(figsize=(12, 6))
+    sns.barplot(data=df_vac.sort_values('Capacidad Semanal', ascending=False),
+                x='Municipio', y='Capacidad Semanal', hue='Prioridad',
+                palette={'Baja': 'yellow', 'Media': 'orange', 'Alta': 'red'})
+    plt.title('Capacidad Semanal de Puntos de Vacunación por Municipio', fontsize=14)
+    plt.xlabel('Municipio', fontsize=12)
+    plt.ylabel('Capacidad Semanal (personas)', fontsize=12)
+    plt.xticks(rotation=45)
+    plt.legend(title='Prioridad', bbox_to_anchor=(1.05, 1), loc='upper left')
+    plt.tight_layout()
+    plt.show()
+    
+    # Tabla resumen
+    print("\n🏥 Resumen de Puntos de Vacunación:")
+    print(df_vac.sort_values(['Prioridad', 'Capacidad Semanal'], ascending=[True, False])[[
         'Municipio', 'Punto', 'Edad mínima (años)', 
         'Edad máxima (años)', 'Capacidad Semanal', 'Prioridad'
     ]].to_string(index=False))
@@ -304,7 +319,7 @@ crear_visualizaciones(df_resultados, agrupado, df_vac)
 # ==================== INFORME Y EXPORTACIÓN ====================
 print("💾 [6/6] Generando informe ejecutivo...")
 
-def generar_informe(df_resultados, agrupado):
+def generar_informe(df_resultados, agrupado, df_vac):  # Añadimos df_vac como parámetro
     sintomas = agrupado[['fiebre', 'vomito', 'dolor_abdo', 'cefalea']].mean()
     
     informe = f"""
@@ -317,6 +332,11 @@ def generar_informe(df_resultados, agrupado):
 - Municipios afectados: {agrupado['nmun_resi'].nunique()}
 - Síntoma más frecuente: {sintomas.idxmax()} ({sintomas.max():.1%})
 
+🔹 PUNTOS DE VACUNACIÓN:
+- Total puntos: {len(df_vac)}
+- Municipios con cobertura: {df_vac['Municipio'].nunique()}
+- Capacidad semanal total: {df_vac['Capacidad Semanal'].sum():,} personas
+
 🔹 PREDICCIONES 2025-2026:
 - Casos esperados 2025: {int(df_resultados[df_resultados['año'] == 2025]['casos'].sum()):,}
 - Casos esperados 2026: {int(df_resultados[df_resultados['año'] == 2026]['casos'].sum()):,}
@@ -327,6 +347,7 @@ def generar_informe(df_resultados, agrupado):
 2. Intensificar vigilancia en municipios con mayor incidencia histórica
 3. Reforzar campañas de prevención en temporada de lluvias
 4. Optimizar distribución de vacunas según capacidad de puntos de vacunación
+5. Expandir cobertura en municipios sin puntos de vacunación
 
 📅 Fecha de generación: {pd.Timestamp.now().strftime('%Y-%m-%d %H:%M')}
 """
@@ -334,7 +355,10 @@ def generar_informe(df_resultados, agrupado):
     
     os.makedirs('resultados', exist_ok=True)
     df_resultados.to_csv('resultados/predicciones_dengue.csv', index=False)
-    print("✅ Resultados exportados a 'resultados/predicciones_dengue.csv'")
+    df_vac.to_csv('resultados/puntos_vacunacion.csv', index=False)
+    print("✅ Resultados exportados:")
+    print("- 'resultados/predicciones_dengue.csv'")
+    print("- 'resultados/puntos_vacunacion.csv'")
 
-generar_informe(df_resultados, agrupado)
+generar_informe(df_resultados, agrupado, df_vac)
 print("🎉 Análisis completado exitosamente!")

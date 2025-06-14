@@ -1,0 +1,7 @@
+Punto,Municipio,Edad mínima (años),Edad máxima (años),Requiere infección previa,Capacidad diaria (personas),Capacidad Semanal,Prioridad
+Hospital Universitario,CALI,9,45,Sí,200,1400,Alta
+Centro de Salud Norte,PALMIRA,9,60,No,150,1050,Alta
+Clínica del Sur,BUENAVENTURA,9,50,Sí,100,700,Media
+Puesto Salud Comuna 3,TULUÁ,10,40,No,120,840,Media
+IPS San Miguel,CARTAGO,10,50,Sí,80,560,Media
+Centro Médico Integral,BUGA,9,55,No,160,1120,Alta
