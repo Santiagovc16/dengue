@@ -5,248 +5,336 @@ import numpy as np
 from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import MinMaxScaler
 from tensorflow.keras.models import Sequential
-from tensorflow.keras.layers import Dense
+from tensorflow.keras.layers import Dense, Dropout
+from tensorflow.keras.callbacks import EarlyStopping
+import matplotlib.pyplot as plt
+import matplotlib.dates as mdates
+from matplotlib.dates import YearLocator, MonthLocator, DateFormatter
+import seaborn as sns
+from statsmodels.tsa.seasonal import seasonal_decompose
+from statsmodels.graphics.tsaplots import plot_acf
+import plotly.graph_objects as go
+from plotly.subplots import make_subplots
+import scipy.stats as stats
+import warnings
+warnings.filterwarnings('ignore')
 
-# Cargar datos preprocesados (como el que generamos antes)
-df = pd.read_csv('data/dengue_valle.csv')
+# ==================== CONFIGURACIÓN INICIAL ====================
+sns.set_style("whitegrid")
+sns.set_palette("husl")
+pd.options.display.float_format = '{:,.2f}'.format
 
-df_vac = pd.read_csv('data/puntos_vacunacion_dengue.csv')
+# ==================== CARGA Y PREPROCESAMIENTO DE DATOS ====================
+print("🔍 [1/6] Cargando y procesando datos...")
+
+def cargar_datos():
+    try:
+        df = pd.read_csv('data/dengue_valle.csv', parse_dates=['fec_not'], dayfirst=True)
+        df_vac = pd.read_csv('data/puntos_vacunacion_dengue.csv')
+        print("✅ Datos cargados exitosamente")
+        return df, df_vac
+    except Exception as e:
+        print(f"❌ Error al cargar datos: {e}")
+        exit()
+
+df, df_vac = cargar_datos()
+
+# Limpieza y estandarización
 df_vac['Municipio'] = df_vac['Municipio'].str.upper().str.strip()
 df['nmun_resi'] = df['nmun_resi'].str.upper().str.strip()
 df['vacunacion_disponible'] = df['nmun_resi'].isin(df_vac['Municipio']).astype(int)
 
-# Filtrar confirmados
-df = df[df['clasfinal'] == 1]
+# Filtrar solo casos confirmados
+df = df[df['clasfinal'] == 1].copy()
 df['semana'] = pd.to_numeric(df['semana'], errors='coerce')
 df['año'] = pd.to_numeric(df['año'], errors='coerce')
 
-agrupado = df.groupby(['año', 'semana', 'nmun_resi']).agg(
-    casos_confirmados=('clasfinal', 'count'),
-    promedio_edad=('Rango_edad', lambda x: pd.to_numeric(x.str.extract(r'(\d+)', expand=False), errors='coerce').dropna().astype(int).mean()),
-    fiebre=('fiebre', lambda x: (x == 1).mean()),
-    vomito=('vomito', lambda x: (x == 1).mean()),
-    dolor_abdo=('dolor_abdo', lambda x: (x == 1).mean()),
-    cefalea=('cefalea', lambda x: (x == 1).mean()),
-    vacunacion_disponible=('vacunacion_disponible', 'mean')
-).reset_index()
+# Extraer características temporales
+df['mes'] = df['fec_not'].dt.month
+df['trimestre'] = df['fec_not'].dt.quarter
 
-features = ['semana', 'promedio_edad', 'fiebre', 'vomito', 'dolor_abdo', 'cefalea', 'vacunacion_disponible']
-target = 'casos_confirmados'
+# ==================== INGENIERÍA DE CARACTERÍSTICAS ====================
+print("🧠 [2/6] Ingeniería de características avanzada...")
 
-# Agregar valores simulados para 2022 si están ausentes
+def procesar_datos(df):
+    agrupado = df.groupby(['año', 'semana', 'nmun_resi']).agg(
+        casos_confirmados=('clasfinal', 'count'),
+        promedio_edad=('Rango_edad', lambda x: pd.to_numeric(x.str.extract(r'(\d+)', expand=False), errors='coerce').dropna().astype(int).mean()),
+        fiebre=('fiebre', lambda x: (x == 1).mean()),
+        vomito=('vomito', lambda x: (x == 1).mean()),
+        dolor_abdo=('dolor_abdo', lambda x: (x == 1).mean()),
+        cefalea=('cefalea', lambda x: (x == 1).mean()),
+        vacunacion_disponible=('vacunacion_disponible', 'mean'),
+        municipios_afectados=('nmun_resi', 'nunique')
+    ).reset_index()
+    
+    agrupado['score_sintomas'] = (agrupado['fiebre'] * 0.4 + agrupado['vomito'] * 0.2 + 
+                                 agrupado['dolor_abdo'] * 0.2 + agrupado['cefalea'] * 0.2)
+    
+    agrupado['casos_ma3'] = agrupado.groupby('nmun_resi')['casos_confirmados'].transform(
+        lambda x: x.rolling(3, min_periods=1).mean())
+    
+    return agrupado
+
+agrupado = procesar_datos(df)
+
+# Generar datos sintéticos si faltan años históricos
 if agrupado[agrupado['año'] == 2022].empty:
+    print("⚠️ Generando datos sintéticos para 2022...")
     semanas_2022 = pd.DataFrame({
         'año': [2022] * 52,
         'semana': list(range(1, 53)),
         'nmun_resi': ['CALI'] * 52,
-        'casos_confirmados': [5] * 52,  # valor estimado bajo
-        'promedio_edad': [25] * 52,
-        'fiebre': [0.5] * 52,
-        'vomito': [0.1] * 52,
-        'dolor_abdo': [0.1] * 52,
-        'cefalea': [0.3] * 52,
-        'vacunacion_disponible': [1] * 52
+        'casos_confirmados': np.random.poisson(5, 52),
+        'promedio_edad': np.random.normal(25, 5, 52).clip(10, 60),
+        'fiebre': np.random.beta(2, 2, 52),
+        'vomito': np.random.beta(1, 5, 52),
+        'dolor_abdo': np.random.beta(1, 5, 52),
+        'cefalea': np.random.beta(2, 3, 52),
+        'vacunacion_disponible': 1,
+        'municipios_afectados': 1,
+        'score_sintomas': np.random.beta(2, 2, 52),
+        'casos_ma3': np.random.poisson(5, 52)
     })
     agrupado = pd.concat([agrupado, semanas_2022], ignore_index=True)
 
-data_model = agrupado.dropna(subset=features + [target])
+# ==================== MODELADO AVANZADO ====================
+print("🤖 [3/6] Entrenando modelo predictivo...")
 
-X = data_model[features].values
-y = data_model[target].values
+features = ['semana', 'promedio_edad', 'score_sintomas', 'vacunacion_disponible', 'casos_ma3']
+target = 'casos_confirmados'
 
-scaler = MinMaxScaler()
-X_scaled = scaler.fit_transform(X)
+def entrenar_modelo(agrupado, features, target):
+    data_model = agrupado.dropna(subset=features + [target])
+    
+    scaler = MinMaxScaler(feature_range=(0.1, 0.9))
+    X = scaler.fit_transform(data_model[features])
+    y = data_model[target].values
+    
+    X_train, X_test, y_train, y_test = train_test_split(
+        X, y, test_size=0.2, random_state=42, 
+        stratify=data_model['año'])
+    
+    model = Sequential([
+        Dense(128, input_dim=X_train.shape[1], activation='relu', kernel_regularizer='l2'),
+        Dropout(0.3),
+        Dense(64, activation='relu'),
+        Dropout(0.2),
+        Dense(32, activation='relu'),
+        Dense(1, activation='linear')
+    ])
+    
+    model.compile(optimizer='adam', loss='mse', metrics=['mae'])
+    
+    early_stop = EarlyStopping(monitor='val_loss', patience=20, restore_best_weights=True)
+    history = model.fit(
+        X_train, y_train, 
+        epochs=200, 
+        batch_size=16, 
+        validation_split=0.2,
+        callbacks=[early_stop],
+        verbose=0)
+    
+    return model, scaler, X_test, y_test
 
-X_train, X_test, y_train, y_test = train_test_split(X_scaled, y, test_size=0.2, random_state=42)
+model, scaler, X_test, y_test = entrenar_modelo(agrupado, features, target)
 
-# Modelo
-model = Sequential()
-model.add(Dense(64, input_dim=X_train.shape[1], activation='relu'))
-model.add(Dense(32, activation='relu'))
-model.add(Dense(1))
-model.compile(optimizer='adam', loss='mse')
-model.fit(X_train, y_train, epochs=100, batch_size=4, validation_split=0.2)
+# ==================== PREDICCIONES FUTURAS ====================
+print("🔮 [4/6] Generando predicciones futuras...")
 
-# Evaluar
-loss = model.evaluate(X_test, y_test)
-print(f"Error cuadrático medio: {loss:.2f}")
+def generar_predicciones(model, scaler, agrupado, features):
+    años_historicos = [2022, 2023, 2024]
+    años_a_predecir = [2025, 2026]
+    df_resultados = pd.DataFrame()
+    
+    for año in años_historicos:
+        temp = agrupado[agrupado['año'] == año][['semana', 'casos_confirmados']].copy()
+        temp['año'] = año
+        temp['tipo'] = 'Real'
+        temp.rename(columns={'casos_confirmados': 'casos'}, inplace=True)
+        df_resultados = pd.concat([df_resultados, temp])
+    
+    semanas_base = agrupado[agrupado['año'].isin(años_historicos)].groupby('semana')[features].median()
+    
+    for año in años_a_predecir:
+        factor = 1.1 if año == 2025 else 0.9
+        semanas_pred = semanas_base.copy() * factor
+        
+        X_pred = scaler.transform(semanas_pred)
+        preds = model.predict(X_pred).flatten()
+        
+        temp = pd.DataFrame({
+            'semana': semanas_pred.index,
+            'casos': preds,
+            'año': año,
+            'tipo': 'Predicción'
+        })
+        df_resultados = pd.concat([df_resultados, temp])
+    
+    return df_resultados
 
-# Predicción ejemplo
-ejemplo = np.array([[25, 15, 1, 0, 0, 1, 1]])  # Semana 25, edad 15, fiebre, sin vómito,  con cefalea, vacunación disponible
-ejemplo_scaled = scaler.transform(ejemplo)
-pred = model.predict(ejemplo_scaled)
+df_resultados = generar_predicciones(model, scaler, agrupado, features)
 
-print(f"Predicción de casos confirmados: {pred[0][0]:.2f}")
+# ==================== VISUALIZACIONES AVANZADAS ====================
+print("📊 [5/6] Creando visualizaciones...")
 
-# === Predicción desde 2020 hasta 2026 ===
-import matplotlib.pyplot as plt
-import matplotlib
-matplotlib.use('MacOSX')  # Para entorno VS Code en Mac M1
-
-años_historicos = [2022, 2023, 2024]
-años_a_predecir = [2025, 2026]
-resultados = []
-
-# Agregar datos reales
-for año in años_historicos:
-    semanas_historicas = agrupado[agrupado['año'] == año]
-    if semanas_historicas.empty:
-        continue
-
-    semanas_resultado = semanas_historicas[['semana']].copy()
-    semanas_resultado['prediccion_casos'] = semanas_historicas['casos_confirmados']
-    semanas_resultado['año'] = año
-    resultados.append(semanas_resultado)
-
-
- # Usar promedios históricos para proyectar 2025 y 2026
-promedios_historicos = agrupado[agrupado['año'].isin([2023, 2024])].groupby('semana')[features].mean()
-promedios_historicos = promedios_historicos.reset_index(drop=True)
-
-for año in años_a_predecir:
-    semanas = promedios_historicos.copy()
-    if año == 2025:
-        semanas[features] *= 1.05  # aumento del 5%
-    else:
-        semanas[features] *= 0.95  # reducción del 5%
-
-    X_scaled = scaler.transform(semanas[features])
-    predicciones = model.predict(X_scaled).flatten()
-
-    semanas_resultado = semanas[['semana']].copy()
-    semanas_resultado['prediccion_casos'] = predicciones
-    semanas_resultado['año'] = año
-    resultados.append(semanas_resultado)
-
-años_prediccion = años_historicos + años_a_predecir
-
-df_resultado = pd.concat(resultados)
-
-# Total por año
-total_por_año = df_resultado.groupby('año')['prediccion_casos'].sum()
-print("\n📊 Total de casos predichos por año:")
-print(total_por_año)
-
-# Depuración: verificar que el año 2025 esté en los datos
-print("\nDatos disponibles por año:")
-print(df_resultado['año'].value_counts().sort_index())
-
-print("\nTotales por año:")
-print(total_por_año)
-
-# Depuración: ver año 2025 detalladamente
-print("\nAño 2025 - Datos predicción:")
-print(df_resultado[df_resultado['año'] == 2025])
-
-# Mostrar tabla de puntos de vacunación organizados
-print("\n🏥 Puntos de Vacunación contra el Dengue:\n")
-puntos_ordenados = df_vac[['Punto', 'Municipio', 'Edad mínima (años)', 'Edad máxima (años)', 'Requiere infección previa', 'Capacidad diaria (personas)']]
-print(puntos_ordenados.to_string(index=False))
-
-
-# === Gráficos diagnósticos para casos de dengue ===
-from statsmodels.tsa.seasonal import seasonal_decompose
-import seaborn as sns
-from statsmodels.graphics.gofplots import qqplot
-from statsmodels.graphics.tsaplots import plot_acf
-
-
-# Datos reales 2022–2024
-serie_real = agrupado[agrupado['año'].isin([2022, 2023, 2024])]
-serie_real = serie_real.groupby(['año', 'semana'])['casos_confirmados'].sum().reset_index()
-serie_real['fecha'] = pd.to_datetime(serie_real['año'].astype(str) + '-' + serie_real['semana'].astype(int).astype(str) + '-1', format='%Y-%W-%w', errors='coerce')
-serie_real = serie_real[['fecha', 'casos_confirmados']].dropna()
-
-# Datos predichos 2025–2026
-serie_pred = df_resultado[df_resultado['año'].isin([2025, 2026])]
-serie_pred = serie_pred[['año', 'semana', 'prediccion_casos']].copy()
-serie_pred['fecha'] = pd.to_datetime(serie_pred['año'].astype(str) + '-' + serie_pred['semana'].astype(int).astype(str) + '-1', format='%Y-%W-%w', errors='coerce')
-serie_pred = serie_pred[['fecha', 'prediccion_casos']].dropna()
-serie_pred.rename(columns={'prediccion_casos': 'casos_confirmados'}, inplace=True)
-
-# Unir ambas series
-serie_dengue = pd.concat([serie_real, serie_pred]).set_index('fecha')
-serie_dengue = serie_dengue['casos_confirmados']
-
-serie_dengue_valida = serie_dengue.dropna()
-print("\nPrimeras filas de serie_dengue:")
-print(serie_dengue.head())
-print("\nFiltrado serie_dengue_valida:")
-print(serie_dengue_valida.head())
-print(f"Semanas disponibles para descomposición: {len(serie_dengue_valida)}")
-if len(serie_dengue_valida) >= 52:
-    descomp = seasonal_decompose(serie_dengue_valida, model='additive', period=26)
-
-    # Gráfico tipo 1: Descomposición temporal
-    plt.figure(figsize=(10, 8))
-    plt.suptitle('Casos de Dengue - Descomposición', fontsize=16)
-    plt.subplot(411)
-    plt.plot(descomp.observed)
-    plt.title('Casos Observados')
-
-    from matplotlib.dates import YearLocator, DateFormatter
-    plt.gca().xaxis.set_major_locator(YearLocator())
-    plt.gca().xaxis.set_major_formatter(DateFormatter('%Y'))
-    plt.xlim(pd.Timestamp('2022-01-01'), pd.Timestamp('2026-12-31'))
-    plt.xticks(rotation=0)
-
-    plt.subplot(412)
-    plt.plot(descomp.trend)
-    plt.title('Tendencia')
-    plt.gca().xaxis.set_major_locator(YearLocator())
-    plt.gca().xaxis.set_major_formatter(DateFormatter('%Y'))
-    plt.xlim(pd.Timestamp('2022-01-01'), pd.Timestamp('2026-12-31'))
-
-    plt.subplot(413)
-    plt.plot(descomp.seasonal)
-    plt.title('Estacionalidad')
-    plt.gca().xaxis.set_major_locator(YearLocator())
-    plt.gca().xaxis.set_major_formatter(DateFormatter('%Y'))
-    plt.xlim(pd.Timestamp('2022-01-01'), pd.Timestamp('2026-12-31'))
-
-    plt.subplot(414)
-    plt.plot(descomp.resid, marker='o', linestyle='none')
-    plt.axhline(0, color='gray', linewidth=1)
-    plt.title('Residuos')
-    plt.gca().xaxis.set_major_locator(YearLocator())
-    plt.gca().xaxis.set_major_formatter(DateFormatter('%Y'))
-    plt.xlim(pd.Timestamp('2022-01-01'), pd.Timestamp('2026-12-31'))
-    plt.tight_layout()
-    plt.subplots_adjust(top=0.92)
-    plt.show()
-
-    # Gráfico tipo 2: Diagnóstico de residuos
-    residuos = descomp.resid.dropna()
-    fig, axs = plt.subplots(2, 2, figsize=(10, 8))
-    fig.suptitle('Análisis de Residuos - Casos Dengue', fontsize=14)
-
-    axs[0, 0].plot(residuos)
-    axs[0, 0].set_title('Residuos Estandarizados')
-    axs[0, 0].xaxis.set_major_locator(plt.MaxNLocator(nbins=6))
-    axs[0, 0].tick_params(axis='x', rotation=30)
-
-    sns.histplot(residuos, kde=True, stat='density', ax=axs[0, 1])
-    sns.kdeplot(residuos, color='orange', ax=axs[0, 1])
-    import numpy as np
-    sns.kdeplot(np.random.normal(0, 1, len(residuos)), color='green', linestyle='--', label='N(0,1)', ax=axs[0, 1])
-    axs[0, 1].set_title('Histograma + KDE')
-
-    qqplot(residuos, line='s', ax=axs[1, 0])
-    axs[1, 0].set_title('Gráfico Q-Q')
-
-    plot_acf(residuos, ax=axs[1, 1])
-    axs[1, 1].set_title('Correlograma')
-
+def crear_visualizaciones(df_resultados, agrupado, df_vac):
+    # 1. Gráfico interactivo de evolución temporal
+    fig = make_subplots(rows=2, cols=1, subplot_titles=("Evolución Semanal de Casos", "Distribución por Año"))
+    
+    colors = {'2022': '#636EFA', '2023': '#EF553B', '2024': '#00CC96', 
+              '2025': '#AB63FA', '2026': '#FFA15A'}
+    
+    for año in df_resultados['año'].unique():
+        df_plot = df_resultados[df_resultados['año'] == año]
+        tipo = 'Real' if año in [2022, 2023, 2024] else 'Predicción'
+        
+        fig.add_trace(go.Scatter(
+            x=df_plot['semana'], y=df_plot['casos'],
+            name=f"{año} ({tipo})",
+            line=dict(color=colors[str(año)], width=2 if tipo == 'Real' else 1.5),
+            line_dash=None if tipo == 'Real' else 'dash',
+            mode='lines+markers',
+            marker=dict(size=6 if tipo == 'Real' else 4)
+        ), row=1, col=1)
+        
+        fig.add_trace(go.Box(
+            y=df_plot['casos'], name=str(año),
+            marker_color=colors[str(año)],
+            showlegend=False
+        ), row=2, col=1)
+    
+    fig.update_layout(
+        title_text="<b>Análisis Predictivo de Dengue 2022-2026</b>",
+        height=800, template='plotly_white',
+        hovermode='x unified'
+    )
+    fig.show()
+    
+    # 2. Análisis de residuos
+    y_pred = model.predict(X_test).flatten()
+    residuos = y_test - y_pred
+    
+    fig_res = make_subplots(rows=1, cols=2, subplot_titles=("Distribución de Residuos", "QQ Plot"))
+    
+    fig_res.add_trace(go.Histogram(
+        x=residuos, name='Residuos', nbinsx=30,
+        marker_color='#636EFA', opacity=0.75
+    ), row=1, col=1)
+    
+    q_theoretical = stats.norm.ppf(np.linspace(0.01, 0.99, len(residuos)))
+    q_sample = np.quantile(residuos, np.linspace(0.01, 0.99, len(residuos)))
+    
+    fig_res.add_trace(go.Scatter(
+        x=q_theoretical, y=q_sample, mode='markers',
+        marker=dict(color='#EF553B', size=8), name='QQ Plot'
+    ), row=1, col=2)
+    
+    fig_res.add_shape(
+        type="line", line=dict(dash='dash'),
+        x0=min(q_theoretical), y0=min(q_theoretical),
+        x1=max(q_theoretical), y1=max(q_theoretical),
+        row=1, col=2
+    )
+    
+    fig_res.update_layout(height=500, showlegend=False)
+    fig_res.show()
+    
+    # 3. Descomposición temporal
+    serie_completa = df_resultados.copy()
+    serie_completa['fecha'] = pd.to_datetime(
+        serie_completa['año'].astype(str) + '-' + 
+        serie_completa['semana'].astype(str) + '-1', 
+        format='%Y-%W-%w')
+    serie_completa = serie_completa.sort_values('fecha').set_index('fecha')['casos']
+    
+    if len(serie_completa) >= 52:
+        descomp = seasonal_decompose(serie_completa, model='additive', period=52)
+        
+        fig, (ax1, ax2, ax3, ax4) = plt.subplots(4, 1, figsize=(14, 10))
+        fig.suptitle('Descomposición Temporal de Casos de Dengue', fontsize=16)
+        
+        ax1.plot(descomp.observed, color='#1f77b4')
+        ax1.set_title('Casos Observados')
+        ax1.grid(True, linestyle='--', alpha=0.6)
+        
+        ax2.plot(descomp.trend, color='#ff7f0e')
+        ax2.set_title('Tendencia')
+        ax2.grid(True, linestyle='--', alpha=0.6)
+        
+        ax3.plot(descomp.seasonal, color='#2ca02c')
+        ax3.set_title('Estacionalidad')
+        ax3.grid(True, linestyle='--', alpha=0.6)
+        
+        ax4.scatter(descomp.resid.index, descomp.resid, color='#d62728', s=15)
+        ax4.axhline(0, color='black', linestyle='--', linewidth=0.8)
+        ax4.set_title('Residuos')
+        ax4.grid(True, linestyle='--', alpha=0.6)
+        
+        for ax in [ax1, ax2, ax3, ax4]:
+            ax.xaxis.set_major_locator(mdates.YearLocator())
+            ax.xaxis.set_major_formatter(mdates.DateFormatter('%Y'))
+        
+        plt.tight_layout()
+        plt.show()
+    
+    # 4. Mapa de calor de síntomas
+    sintomas = agrupado[['fiebre', 'vomito', 'dolor_abdo', 'cefalea']].mean().to_frame('Frecuencia')
+    plt.figure(figsize=(8, 4))
+    sns.heatmap(sintomas.T, annot=True, fmt=".2%", cmap="YlOrRd")
+    plt.title("Frecuencia Relativa de Síntomas")
+    plt.xticks(rotation=45)
     plt.tight_layout()
     plt.show()
-elif not serie_dengue_valida.empty:
-    print("⚠️ No hay suficientes datos para descomposición estacional, pero se graficará la evolución de casos.")
-    serie_dengue_valida.plot(figsize=(12, 6), title="Evolución semanal de casos de Dengue")
-    plt.xlabel("Fecha")
-    plt.ylabel("Casos confirmados")
-    plt.grid(True)
-    plt.tight_layout()
-    plt.show()
-else:
-    print("❌ No hay datos disponibles para graficar la evolución semanal de casos de Dengue.")
-plt.show(block=True)
+    
+    # 5. Tabla de vacunación mejorada
+    print("\n🏥 Puntos de Vacunación contra el Dengue:")
+    df_vac['Capacidad Semanal'] = df_vac['Capacidad diaria (personas)'] * 7
+    df_vac['Prioridad'] = pd.cut(df_vac['Capacidad Semanal'], 
+                                bins=[0, 500, 1000, float('inf')],
+                                labels=['Baja', 'Media', 'Alta'])
+    
+    print(df_vac.sort_values(['Prioridad', 'Municipio'])[[
+        'Municipio', 'Punto', 'Edad mínima (años)', 
+        'Edad máxima (años)', 'Capacidad Semanal', 'Prioridad'
+    ]].to_string(index=False))
+
+crear_visualizaciones(df_resultados, agrupado, df_vac)
+
+# ==================== INFORME Y EXPORTACIÓN ====================
+print("💾 [6/6] Generando informe ejecutivo...")
+
+def generar_informe(df_resultados, agrupado):
+    sintomas = agrupado[['fiebre', 'vomito', 'dolor_abdo', 'cefalea']].mean()
+    
+    informe = f"""
+📌 INFORME EJECUTIVO DE DENGUE (2022-2026)
+{'='*50}
+
+🔹 DATOS HISTÓRICOS:
+- Años analizados: {", ".join(map(str, [2022, 2023, 2024]))}
+- Total casos registrados: {int(agrupado['casos_confirmados'].sum()):,}
+- Municipios afectados: {agrupado['nmun_resi'].nunique()}
+- Síntoma más frecuente: {sintomas.idxmax()} ({sintomas.max():.1%})
+
+🔹 PREDICCIONES 2025-2026:
+- Casos esperados 2025: {int(df_resultados[df_resultados['año'] == 2025]['casos'].sum()):,}
+- Casos esperados 2026: {int(df_resultados[df_resultados['año'] == 2026]['casos'].sum()):,}
+- Tendencia: {'ALZA (↑)' if df_resultados[df_resultados['año'] == 2025]['casos'].mean() > df_resultados[df_resultados['año'] == 2024]['casos'].mean() else 'BAJA (↓)'}
+
+🔹 RECOMENDACIONES:
+1. Priorizar semanas: {', '.join(map(str, df_resultados.groupby('semana')['casos'].mean().nlargest(5).index.tolist()))}
+2. Intensificar vigilancia en municipios con mayor incidencia histórica
+3. Reforzar campañas de prevención en temporada de lluvias
+4. Optimizar distribución de vacunas según capacidad de puntos de vacunación
+
+📅 Fecha de generación: {pd.Timestamp.now().strftime('%Y-%m-%d %H:%M')}
+"""
+    print(informe)
+    
+    os.makedirs('resultados', exist_ok=True)
+    df_resultados.to_csv('resultados/predicciones_dengue.csv', index=False)
+    print("✅ Resultados exportados a 'resultados/predicciones_dengue.csv'")
+
+generar_informe(df_resultados, agrupado)
+print("🎉 Análisis completado exitosamente!")
