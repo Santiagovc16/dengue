@@ -3,4 +3,4 @@ numpy
 scikit-learn
 matplotlib
 tensorflow
-pip install pandas numpy scikit-learn tensorflow matplotlib seaborn statsmodels plotly scipy
+#pip install pandas numpy scikit-learn tensorflow matplotlib seaborn statsmodels plotly scipy

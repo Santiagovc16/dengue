@@ -112,40 +112,58 @@ print("🤖 [3/6] Entrenando modelo predictivo...")
 features = ['semana', 'promedio_edad', 'score_sintomas', 'vacunacion_disponible', 'casos_ma3']
 target = 'casos_confirmados'
 
-def entrenar_modelo(agrupado, features, target):
-    data_model = agrupado.dropna(subset=features + [target])
-    
-    scaler = MinMaxScaler(feature_range=(0.1, 0.9))
-    X = scaler.fit_transform(data_model[features])
-    y = data_model[target].values
-    
-    X_train, X_test, y_train, y_test = train_test_split(
-        X, y, test_size=0.2, random_state=42, 
-        stratify=data_model['año'])
-    
-    model = Sequential([
-        Dense(128, input_dim=X_train.shape[1], activation='relu', kernel_regularizer='l2'),
-        Dropout(0.3),
-        Dense(64, activation='relu'),
-        Dropout(0.2),
-        Dense(32, activation='relu'),
-        Dense(1, activation='linear')
-    ])
-    
-    model.compile(optimizer='adam', loss='mse', metrics=['mae'])
-    
-    early_stop = EarlyStopping(monitor='val_loss', patience=20, restore_best_weights=True)
-    history = model.fit(
-        X_train, y_train, 
-        epochs=200, 
-        batch_size=16, 
-        validation_split=0.2,
-        callbacks=[early_stop],
-        verbose=0)
-    
-    return model, scaler, X_test, y_test
+# === Intentar cargar modelo y escalador previamente entrenados ===
+from keras.models import load_model
+import joblib
 
-model, scaler, X_test, y_test = entrenar_modelo(agrupado, features, target)
+model_path = os.path.join(base_dir, 'modelo_dengue.keras')
+scaler_path = os.path.join(base_dir, 'scaler_dengue.pkl')
+
+if os.path.exists(model_path) and os.path.exists(scaler_path):
+    print("📦 Cargando modelo y escalador existentes...")
+    model = load_model(model_path)
+    scaler = joblib.load(scaler_path)
+    # Simula datos de prueba si es necesario
+    X_test, y_test = np.array([]), np.array([])
+else:
+    def entrenar_modelo(agrupado, features, target):
+        data_model = agrupado.dropna(subset=features + [target])
+        
+        scaler = MinMaxScaler(feature_range=(0.1, 0.9))
+        X = scaler.fit_transform(data_model[features])
+        y = data_model[target].values
+        
+        X_train, X_test, y_train, y_test = train_test_split(
+            X, y, test_size=0.2, random_state=42, 
+            stratify=data_model['año'])
+        
+        model = Sequential([
+            Dense(128, input_dim=X_train.shape[1], activation='relu', kernel_regularizer='l2'),
+            Dropout(0.3),
+            Dense(64, activation='relu'),
+            Dropout(0.2),
+            Dense(32, activation='relu'),
+            Dense(1, activation='linear')
+        ])
+        
+        model.compile(optimizer='adam', loss='mse', metrics=['mae'])
+        
+        early_stop = EarlyStopping(monitor='val_loss', patience=20, restore_best_weights=True)
+        history = model.fit(
+            X_train, y_train, 
+            epochs=200, 
+            batch_size=16, 
+            validation_split=0.2,
+            callbacks=[early_stop],
+            verbose=0)
+        
+        # Guardar el modelo y el escalador entrenados
+        model.save(model_path)
+        joblib.dump(scaler, scaler_path)
+        
+        return model, scaler, X_test, y_test
+
+    model, scaler, X_test, y_test = entrenar_modelo(agrupado, features, target)
 
 # ==================== PREDICCIONES FUTURAS ====================
 print("🔮 [4/6] Generando predicciones futuras...")
