@@ -1,4 +1,5 @@
 import os
+base_dir = os.path.dirname(__file__)
 os.environ['TK_SILENCE_DEPRECATION'] = '1'
 import pandas as pd
 import numpy as np
@@ -18,7 +19,7 @@ from plotly.subplots import make_subplots
 import scipy.stats as stats
 import warnings
 warnings.filterwarnings('ignore')
-
+# ==================== Windows compatibilidad del script ====================
 # ==================== CONFIGURACIÓN INICIAL ====================
 sns.set_style("whitegrid")
 sns.set_palette("husl")
@@ -28,14 +29,21 @@ pd.options.display.float_format = '{:,.2f}'.format
 print("🔍 [1/6] Cargando y procesando datos...")
 
 def cargar_datos():
+    path_dengue = os.path.join(base_dir, 'data', 'dengue_valle.csv')
+    path_vacunas = os.path.join(base_dir, 'data', 'puntos_vacunacion_dengue.csv')
+
     try:
-        df = pd.read_csv('data/dengue_valle.csv', parse_dates=['fec_not'], dayfirst=True)
-        df_vac = pd.read_csv('data/puntos_vacunacion_dengue.csv')
-        print("✅ Datos cargados exitosamente")
-        return df, df_vac
-    except Exception as e:
-        print(f"❌ Error al cargar datos: {e}")
-        exit()
+        df = pd.read_csv(path_dengue, parse_dates=['fec_not'], dayfirst=True, encoding='utf-8')
+    except UnicodeDecodeError:
+        df = pd.read_csv(path_dengue, parse_dates=['fec_not'], dayfirst=True, encoding='latin1')
+
+    try:
+        df_vac = pd.read_csv(path_vacunas, encoding='utf-8')
+    except UnicodeDecodeError:
+        df_vac = pd.read_csv(path_vacunas, encoding='latin1')
+
+    print("✅ Datos cargados exitosamente")
+    return df, df_vac
 
 df, df_vac = cargar_datos()
 
@@ -353,12 +361,13 @@ def generar_informe(df_resultados, agrupado, df_vac):  # Añadimos df_vac como p
 """
     print(informe)
     
-    os.makedirs('resultados', exist_ok=True)
-    df_resultados.to_csv('resultados/predicciones_dengue.csv', index=False)
-    df_vac.to_csv('resultados/puntos_vacunacion.csv', index=False)
+    output_dir = os.path.join(base_dir, 'resultados')
+    os.makedirs(output_dir, exist_ok=True)
+    df_resultados.to_csv(os.path.join(output_dir, 'predicciones_dengue.csv'), index=False)
+    df_vac.to_csv(os.path.join(output_dir, 'puntos_vacunacion.csv'), index=False)
     print("✅ Resultados exportados:")
     print("- 'resultados/predicciones_dengue.csv'")
     print("- 'resultados/puntos_vacunacion.csv'")
 
 generar_informe(df_resultados, agrupado, df_vac)
-print("🎉 Análisis completado exitosamente!") 
+print("🎉 Análisis completado exitosamente!")
